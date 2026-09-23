@@ -1,32 +1,30 @@
-import { ipcRenderer, contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron';
+import type { DesktopAPI } from '../src/document';
 
-// --------- Expose some API to the Renderer process ---------
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(...args: Parameters<typeof ipcRenderer.on>) {
-    const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
+const desktop: DesktopAPI = {
+  platform: process.platform,
+  readWorkspace: () => ipcRenderer.invoke('workspace-read'),
+  writeWorkspaceFile: file => ipcRenderer.invoke('workspace-write', file),
+  renameWorkspaceFile: (id, name) => ipcRenderer.invoke('workspace-rename', id, name),
+  getExportSettings: () => ipcRenderer.invoke('export-settings-get'),
+  saveExportSettings: settings => ipcRenderer.invoke('export-settings-save', settings),
+  exportImage: (name, format, bytes, dpi) => ipcRenderer.invoke('image-export', name, format, bytes, dpi),
+  setMenuState: state => ipcRenderer.send('document-menu-state', state),
+  getThumbnail: (id, key) => ipcRenderer.invoke('thumbnail-get', id, key),
+  putThumbnail: (id, key, dataURL) => ipcRenderer.invoke('thumbnail-put', id, key, dataURL),
+  listDrafts: () => ipcRenderer.invoke('draft-list'),
+  writeDraft: draft => ipcRenderer.invoke('draft-write', draft),
+  deleteDraft: id => ipcRenderer.invoke('draft-delete', id),
+  checkpoint: draft => ipcRenderer.invoke('draft-checkpoint', draft),
+  openFile: id => ipcRenderer.invoke('document-open', id),
+  loadFile: id => ipcRenderer.invoke('document-load', id),
+  saveFile: (id, name, scene, saveAs) => ipcRenderer.invoke('document-save', id, name, scene, saveAs),
+  onCommand: listener => {
+    const handler = (_event: Electron.IpcRendererEvent, command: string) => listener(command);
+    ipcRenderer.on('document-command', handler);
+    return () => ipcRenderer.removeListener('document-command', handler);
   },
-  off(...args: Parameters<typeof ipcRenderer.off>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.off(channel, ...omit)
-  },
-  send(...args: Parameters<typeof ipcRenderer.send>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.send(channel, ...omit)
-  },
-  invoke(...args: Parameters<typeof ipcRenderer.invoke>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.invoke(channel, ...omit)
-  },
-
-  // You can expose other APTs you need here.
-  // ...
-})
-
-// Expose file operations API
-contextBridge.exposeInMainWorld('fileAPI', {
-  openFile: () => ipcRenderer.invoke('open-file-dialog'),
-  saveFile: (data: unknown) => ipcRenderer.invoke('save-file-dialog', data),
-  savePNG: (buffer: Uint8Array) => ipcRenderer.invoke('save-png-dialog', buffer),
-  saveSVG: (svgString: string) => ipcRenderer.invoke('save-svg-dialog', svgString)
-})
+  closeWindow: () => ipcRenderer.send('document-close-ready'),
+  cancelClose: () => ipcRenderer.send('document-close-cancelled'),
+};
+contextBridge.exposeInMainWorld('desktop', desktop);

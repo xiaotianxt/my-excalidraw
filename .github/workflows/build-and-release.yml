@@ -1,215 +1,107 @@
-name: Build and Release
+name: Desktop Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write  # Required for creating releases and uploading assets
-  actions: read    # Required for downloading artifacts
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    
     strategy:
-      fail-fast: false  # Don't cancel other jobs if one fails
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
-            arch: x64
-          - os: macos-latest
+            platform: mac
             arch: arm64
+          - os: macos-latest
+            platform: mac
+            arch: x64
           - os: windows-latest
+            platform: win
             arch: x64
           - os: ubuntu-latest
+            platform: linux
             arch: x64
-        
+    runs-on: ${{ matrix.os }}
+    env:
+      # No signing/notarization credentials are configured for public CI builds.
+      # Release notes disclose this; local developer signing remains unchanged.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-          
-      - name: Create Electron cache directory (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            mkdir -p ~/Library/Caches/electron
-          else
-            mkdir -p ~/.cache/electron
-          fi
-          
-      - name: Create Electron cache directory (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          if (!(Test-Path "$env:LOCALAPPDATA\electron\Cache")) {
-            New-Item -ItemType Directory -Path "$env:LOCALAPPDATA\electron\Cache" -Force
-          }
-        shell: pwsh
-          
-      - name: Cache Electron binaries (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/cache@v4
+          node-version: '22'
+          cache: npm
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: node -e 'const p=require("./package.json"); if(process.env.GITHUB_REF_NAME!=="v"+p.version) throw Error("Tag/package version mismatch")'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm test
+      - run: npm run build
+      - name: Embedded PNG/SVG and DPI round-trip
+        if: matrix.platform == 'mac' && matrix.arch == 'arm64'
+        run: npm run test:images
+      - name: Package desktop installers
+        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
+      - uses: actions/upload-artifact@v4
         with:
-          path: ~/Library/Caches/electron
-          key: ${{ runner.os }}-${{ matrix.arch }}-electron-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-electron-
-            ${{ runner.os }}-electron-
-            
-      - name: Cache Electron binaries (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/electron
-          key: ${{ runner.os }}-${{ matrix.arch }}-electron-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-electron-
-            ${{ runner.os }}-electron-
-            
-      - name: Cache Electron binaries (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.LOCALAPPDATA }}\electron\Cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-electron-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-electron-
-            ${{ runner.os }}-electron-
-          
-      - name: Install dependencies
-        run: npm ci
-        
-      - name: Run linter
-        run: npm run lint
-        continue-on-error: false
-        
-      - name: Type check
-        run: npm run type-check
-        continue-on-error: false
-        
-      - name: Build application (macOS)
-        if: matrix.os == 'macos-latest'
-        run: npm run build:mac -- --${{ matrix.arch }}
-        continue-on-error: false
-        
-      - name: Build application (Windows)
-        if: matrix.os == 'windows-latest'
-        run: npm run build:win
-        continue-on-error: false
-        
-      - name: Build application (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run build:linux
-        continue-on-error: false
-          
-      - name: Upload artifacts (macOS)
-        if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-${{ matrix.arch }}-build
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            dist/*.dmg
-            dist/*.zip
-          retention-days: 7
-          
-      - name: Upload artifacts (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build
-          path: |
-            dist/*.exe
-            dist/*.msi
-            dist/*.zip
-          retention-days: 7
-          
-      - name: Upload artifacts (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/*.tar.gz
+            release/*.dmg
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
           retention-days: 7
 
-  release:
+  publish:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && always()  # Run even if some builds failed
-    
+    permissions:
+      contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-        continue-on-error: true  # Continue even if some artifacts are missing
-          
-      - name: Display structure of downloaded files
-        run: |
-          echo "Available artifacts:"
-          ls -la artifacts/ || echo "No artifacts directory found"
-          find artifacts/ -type f 2>/dev/null || echo "No artifact files found"
-        
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/**/*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          fail_on_unmatched_files: false  # Don't fail if some artifacts are missing
-          body: |
-            ## 🎉 My Excalidraw ${{ github.ref_name }}
-            
-            A modern, feature-rich Excalidraw desktop application with workspace management.
-            
-            ### 📦 Downloads
-            
-            - **macOS**: Download the `.dmg` file for macOS (Intel and Apple Silicon)
-            - **Windows**: Download the `.exe` installer for Windows
-            - **Linux**: Download the `.AppImage` for universal Linux support, or `.deb`/`.rpm` for specific distributions
-            
-            ### 🚀 What's New
-            
-            See the [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for detailed changes.
-            
-            ### 🐛 Issues
-            
-            If you encounter any issues, please report them on our [Issues page](https://github.com/${{ github.repository }}/issues).
-            
-            ---
-            
-            ## 🎉 我的 Excalidraw ${{ github.ref_name }}
-            
-            一个现代化、功能丰富的 Excalidraw 桌面应用程序，具有工作区管理功能。
-            
-            ### 📦 下载
-            
-            - **macOS**: 下载 `.dmg` 文件（支持 Intel 和 Apple Silicon）
-            - **Windows**: 下载 `.exe` 安装程序
-            - **Linux**: 下载 `.AppImage` 通用版本，或针对特定发行版的 `.deb`/`.rpm`
-            
-            ### 🚀 更新内容
-            
-            详细更改请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
-            
-            ### 🐛 问题反馈
-            
-            如遇到任何问题，请在我们的 [Issues 页面](https://github.com/${{ github.repository }}/issues) 报告。
+          pattern: desktop-*
+          path: installers
+          merge-multiple: true
+      - name: Verify complete release and publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          files=(
+            "My-Excalidraw-${version}-mac-arm64.dmg"
+            "My-Excalidraw-${version}-mac-x64.dmg"
+            "My-Excalidraw-${version}-win-x64.exe"
+            "My-Excalidraw-${version}-linux-x64.AppImage"
+            "My-Excalidraw-${version}-linux-x64.deb"
+          )
+          for file in "${files[@]}"; do test -s "installers/$file"; done
+          (cd installers && sha256sum "${files[@]}" > SHA256SUMS.txt)
+          # Keep the release a draft until every asset has uploaded successfully.
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' > release-state; then
+            test "$(< release-state)" = true || { echo 'Refusing to replace a published release'; exit 1; }
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --target "$GITHUB_SHA" --draft --title "$GITHUB_REF_NAME" --notes-file "docs/releases/${GITHUB_REF_NAME}.md"
+          fi
+          gh release upload "$GITHUB_REF_NAME" installers/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest

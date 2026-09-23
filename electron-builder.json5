@@ -1,57 +1,12 @@
-// @see - https://www.electron.build/configuration/configuration
 {
-  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.myexcalidraw.app",
-  "asar": true,
   "productName": "My Excalidraw",
-  "copyright": "Copyright © 2024 My Excalidraw",
-  "directories": {
-    "output": "dist"
-  },
-  "files": [
-    "dist",
-    "dist-electron"
-  ],
-  "mac": {
-    "target": [
-      {
-        "target": "dmg"
-      }
-    ],
-    "artifactName": "${productName}-Mac-${arch}-${version}.${ext}",
-    "category": "public.app-category.graphics-design",
-    "icon": "build/icon.icns"
-  },
-  "win": {
-    "target": [
-      {
-        "target": "nsis",
-        "arch": ["x64"]
-      }
-    ],
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}",
-    "icon": "build/icon.ico"
-  },
-  "nsis": {
-    "oneClick": false,
-    "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
-  },
-  "linux": {
-    "target": [
-      {
-        "target": "AppImage",
-        "arch": ["x64"]
-      },
-      {
-        "target": "deb",
-        "arch": ["x64"]
-      }
-    ],
-    "artifactName": "${productName}-Linux-${version}.${ext}",
-    "category": "Graphics",
-    "icon": "build/icon.png"
-  },
+  "asar": true,
+  "directories": { "output": "release" },
+  "files": ["dist", "dist-electron"],
+  "mac": { "artifactName": "My-Excalidraw-${version}-mac-${arch}.${ext}", "target": ["dmg"], "category": "public.app-category.graphics-design", "icon": "build/icon.icns" },
+  "win": { "artifactName": "My-Excalidraw-${version}-win-${arch}.${ext}", "target": ["nsis"], "icon": "build/icon.ico" },
+  "nsis": { "deleteAppDataOnUninstall": false },
+  "linux": { "artifactName": "My-Excalidraw-${version}-linux-${arch}.${ext}", "target": ["AppImage", "deb"], "category": "Graphics", "icon": "build/icon.png" },
   "publish": null
 }
