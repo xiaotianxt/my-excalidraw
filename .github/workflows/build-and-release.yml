@@ -6,16 +6,24 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Resume publishing this existing version tag (leave both inputs empty for build-only)'
+        type: string
+      artifact_run_id:
+        description: 'Tag-triggered run whose four desktop builds already succeeded'
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.artifact_run_id == ''
     strategy:
       fail-fast: false
       matrix:
@@ -34,12 +42,11 @@ jobs:
             arch: x64
     runs-on: ${{ matrix.os }}
     env:
-      # No signing/notarization credentials are configured for public CI builds.
-      # Release notes disclose this; local developer signing remains unchanged.
+      # No distribution signing/notarization credentials are configured in CI.
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -57,7 +64,7 @@ jobs:
         run: npm run test:images
       - name: Package desktop installers
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -70,38 +77,84 @@ jobs:
 
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      always() &&
+      ((startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.artifact_run_id != '' && inputs.release_tag != ''))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      SOURCE_RUN: ${{ inputs.artifact_run_id || github.run_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify artifact provenance and all build results
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          export EXPECTED_SHA=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          git show "$RELEASE_TAG:package.json" > tagged-package.json
+          git show "$RELEASE_TAG:docs/releases/$RELEASE_TAG.md" > release-notes.md
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/jobs?per_page=100" > source-jobs.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const read = name => JSON.parse(fs.readFileSync(name, 'utf8'));
+          const run = read('source-run.json');
+          const { RELEASE_TAG: tag, EXPECTED_SHA: sha } = process.env;
+          if (`v${read('tagged-package.json').version}` !== tag || run.head_sha !== sha ||
+              run.head_branch !== tag || run.event !== 'push' || run.path !== '.github/workflows/build-and-release.yml') {
+            throw Error('Artifacts are not from the exact version-tag commit');
+          }
+          const jobs = read('source-jobs.json').jobs;
+          for (const platform of ['mac, arm64', 'mac, x64', 'win, x64', 'linux, x64']) {
+            const matches = jobs.filter(job => job.name.startsWith('build (') && job.name.endsWith(`, ${platform})`));
+            if (matches.length !== 1 || matches[0].status !== 'completed' || matches[0].conclusion !== 'success') {
+              throw Error(`Required desktop build did not pass: ${platform}`);
+            }
+          }
+          console.log(`Verified four successful builds at ${sha}`);
+          NODE
+      - uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
           path: installers
           merge-multiple: true
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Verify complete release and publish
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           files=(
             "My-Excalidraw-${version}-mac-arm64.dmg"
             "My-Excalidraw-${version}-mac-x64.dmg"
             "My-Excalidraw-${version}-win-x64.exe"
-            "My-Excalidraw-${version}-linux-x64.AppImage"
-            "My-Excalidraw-${version}-linux-x64.deb"
+            "My-Excalidraw-${version}-linux-x86_64.AppImage"
+            "My-Excalidraw-${version}-linux-amd64.deb"
           )
-          for file in "${files[@]}"; do test -s "installers/$file"; done
+          for file in "${files[@]}"; do
+            if ! test -s "installers/$file"; then
+              echo "::error::Missing required installer: $file"
+              ls -l installers
+              exit 1
+            fi
+          done
           (cd installers && sha256sum "${files[@]}" > SHA256SUMS.txt)
-          # Keep the release a draft until every asset has uploaded successfully.
-          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' > release-state; then
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > release-state; then
             test "$(< release-state)" = true || { echo 'Refusing to replace a published release'; exit 1; }
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --target "$GITHUB_SHA" --draft --title "$GITHUB_REF_NAME" --notes-file "docs/releases/${GITHUB_REF_NAME}.md"
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes-file release-notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" installers/* --clobber
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          assets=(installers/SHA256SUMS.txt)
+          for file in "${files[@]}"; do assets+=("installers/$file"); done
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

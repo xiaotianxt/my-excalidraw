@@ -23,9 +23,18 @@ The script checks the package version and release notes, refuses existing tags, 
 - Windows x64 NSIS installer
 - Linux x64 AppImage and deb
 
-All builds must pass before publication. The publisher verifies all five installer names, generates SHA-256 checksums, uploads into a draft release, then makes it public. Manual workflow dispatch builds artifacts only; it does not publish a release.
+All builds must pass before publication. The publisher verifies the exact tag commit, all four successful build jobs and all five installer names, generates SHA-256 checksums, uploads into a draft release, then makes it public. Linux uses the packager's conventional architecture names: `x86_64.AppImage` and `amd64.deb`.
 
-If a build fails, fix the cause before releasing. Never publish a partially successful matrix or silently move a published tag. A failed asset upload may leave a draft release; inspect it before resuming the publish job.
+Manual workflow dispatch with empty inputs builds artifacts only. To resume a failed publish step without rebuilding or moving the version tag, provide both `release_tag` and `artifact_run_id`:
+
+```bash
+gh workflow run build-and-release.yml --ref main \
+  -f release_tag=v0.1.3 -f artifact_run_id=<tag-build-run-id>
+```
+
+The publisher rejects artifacts unless the source run was triggered by that exact tag, its commit matches the tag, and every required desktop build succeeded. It refuses to overwrite an already public release.
+
+If a build fails, fix the cause before releasing. Never publish a partially successful matrix or silently move a published tag. A failed asset upload may leave a draft release; inspect it before resuming publication. The artifact download must pass its digest verification; never weaken this check.
 
 ## Local packaging
 
