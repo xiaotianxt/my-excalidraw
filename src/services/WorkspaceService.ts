@@ -1,342 +1,90 @@
-import type { BinaryFiles, AppState } from "@excalidraw/excalidraw/types";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import { thumbnailService } from './ThumbnailService';
+import type { Scene, DesktopAPI } from '../document';
 
-// 文件元数据接口
 export interface FileMetadata {
   id: string;
   name: string;
   createdAt: number;
   updatedAt: number;
-  thumbnail?: string; // base64 图片
-  size: number; // 文件大小（字节）
-  elementCount: number; // 元素数量
+  thumbnail?: string;
+  size: number;
+  elementCount: number;
+  filePath?: string;
 }
-
-// 工作区文件接口
-export interface WorkspaceFile extends FileMetadata {
-  data: {
-    elements: readonly ExcalidrawElement[];
-    appState: AppState;
-    files: BinaryFiles;
-  };
-}
-
-// 工作区配置
+export interface WorkspaceFile extends FileMetadata { data: Scene }
 export interface WorkspaceConfig {
-  recentFiles: string[]; // 最近打开的文件ID列表
-  favoriteFiles: string[]; // 收藏的文件ID列表
+  recentFiles: string[];
+  favoriteFiles: string[];
   sortBy: 'name' | 'createdAt' | 'updatedAt' | 'size';
   sortOrder: 'asc' | 'desc';
   viewMode: 'grid' | 'list';
 }
 
-/**
- * 工作区服务 - 管理本地文件存储和工作区状态
- */
+// Legacy drawings are read-only. Explicit new saves shadow the corresponding ID
+// with a disk document, without bulk migration or the browser quota ceiling.
 export class WorkspaceService {
-  private static instance: WorkspaceService;
-  private readonly STORAGE_KEY = 'excalidraw-workspace';
-  private readonly CONFIG_KEY = 'excalidraw-workspace-config';
-  
-  private constructor() {}
-  
-  public static getInstance(): WorkspaceService {
-    if (!WorkspaceService.instance) {
-      WorkspaceService.instance = new WorkspaceService();
+  private readonly storageKey = 'excalidraw-workspace';
+  private readonly configKey = 'excalidraw-workspace-config';
+  constructor(
+    private storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage,
+    private desktop: () => Pick<DesktopAPI, 'readWorkspace' | 'writeWorkspaceFile' | 'renameWorkspaceFile'> = () => window.desktop,
+  ) {}
+
+  private read(): WorkspaceFile[] {
+    const raw = this.storage.getItem(this.storageKey);
+    if (raw === null) return [];
+    const files = JSON.parse(raw);
+    if (!Array.isArray(files) || files.some(file => !file || typeof file.id !== 'string' || typeof file.name !== 'string' || !Array.isArray(file.data?.elements) || !file.data.appState || typeof file.data.appState !== 'object' || !file.data.files || typeof file.data.files !== 'object')) {
+      throw new Error('工作区无法读取。已停止写入，原数据保持不变。');
     }
-    return WorkspaceService.instance;
+    return files;
   }
 
-  /**
-   * 获取所有工作区文件
-   */
-  public async getAllFiles(): Promise<WorkspaceFile[]> {
-    try {
-      const stored = localStorage.getItem(this.STORAGE_KEY);
-      if (!stored) return [];
-      
-      const files: WorkspaceFile[] = JSON.parse(stored);
-      return files.sort((a, b) => b.updatedAt - a.updatedAt);
-    } catch (error) {
-      console.error('获取工作区文件失败:', error);
-      return [];
-    }
+  async getAllFiles(): Promise<WorkspaceFile[]> {
+    const legacy = this.read();
+    const saved = await this.desktop().readWorkspace();
+    const merged = new Map(legacy.map(file => [file.id, file]));
+    for (const file of saved.files) merged.set(file.id, file);
+    return [...merged.values()].map(file => ({ ...file, name: saved.names[file.id] ?? file.name })).sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  /**
-   * 保存文件到工作区
-   */
-  public async saveToWorkspace(
-    name: string,
-    elements: readonly ExcalidrawElement[],
-    appState: AppState,
-    files: BinaryFiles,
-    id?: string
-  ): Promise<string> {
-    try {
-      const allFiles = await this.getAllFiles();
-      const now = Date.now();
-      
-      const fileId = id || this.generateId();
-      const existingIndex = allFiles.findIndex(f => f.id === fileId);
-      
-      // 生成缩略图
-      const thumbnail = await this.generateThumbnail(elements, appState, files);
-      
-      const fileData: WorkspaceFile = {
-        id: fileId,
-        name: name || `未命名绘图 ${new Date().toLocaleDateString()}`,
-        createdAt: existingIndex >= 0 ? allFiles[existingIndex].createdAt : now,
-        updatedAt: now,
-        thumbnail,
-        size: this.calculateSize(elements, appState, files),
-        elementCount: elements.length,
-        data: { elements, appState, files }
-      };
-      
-      if (existingIndex >= 0) {
-        allFiles[existingIndex] = fileData;
-      } else {
-        allFiles.push(fileData);
-      }
-      
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(allFiles));
-      
-      // 更新最近文件列表
-      await this.addToRecentFiles(fileId);
-      
-      return fileId;
-    } catch (error) {
-      console.error('保存到工作区失败:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 从工作区加载文件
-   */
-  public async loadFromWorkspace(id: string): Promise<WorkspaceFile | null> {
-    try {
-      const allFiles = await this.getAllFiles();
-      const file = allFiles.find(f => f.id === id);
-      
-      if (file) {
-        await this.addToRecentFiles(id);
-      }
-      
-      return file || null;
-    } catch (error) {
-      console.error('从工作区加载文件失败:', error);
-      return null;
-    }
-  }
-
-  /**
-   * 删除工作区文件
-   */
-  public async deleteFromWorkspace(id: string): Promise<boolean> {
-    try {
-      const allFiles = await this.getAllFiles();
-      const filteredFiles = allFiles.filter(f => f.id !== id);
-      
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(filteredFiles));
-      
-      // 从最近文件和收藏中移除
-      const config = await this.getConfig();
-      config.recentFiles = config.recentFiles.filter(fid => fid !== id);
-      config.favoriteFiles = config.favoriteFiles.filter(fid => fid !== id);
-      await this.saveConfig(config);
-      
-      return true;
-    } catch (error) {
-      console.error('删除工作区文件失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 复制文件
-   */
-  public async duplicateFile(id: string): Promise<string | null> {
-    try {
-      const file = await this.loadFromWorkspace(id);
-      if (!file) return null;
-      
-      const newName = `${file.name} - 副本`;
-      return await this.saveToWorkspace(
-        newName,
-        file.data.elements,
-        file.data.appState,
-        file.data.files
-      );
-    } catch (error) {
-      console.error('复制文件失败:', error);
-      return null;
-    }
-  }
-
-  /**
-   * 重命名文件
-   */
-  public async renameFile(id: string, newName: string): Promise<boolean> {
-    try {
-      const allFiles = await this.getAllFiles();
-      const fileIndex = allFiles.findIndex(f => f.id === id);
-      
-      if (fileIndex >= 0) {
-        allFiles[fileIndex].name = newName;
-        allFiles[fileIndex].updatedAt = Date.now();
-        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(allFiles));
-        return true;
-      }
-      
-      return false;
-    } catch (error) {
-      console.error('重命名文件失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 获取工作区配置
-   */
-  public async getConfig(): Promise<WorkspaceConfig> {
-    try {
-      const stored = localStorage.getItem(this.CONFIG_KEY);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (error) {
-      console.error('获取工作区配置失败:', error);
-    }
-    
-    // 默认配置
-    return {
-      recentFiles: [],
-      favoriteFiles: [],
-      sortBy: 'updatedAt',
-      sortOrder: 'desc',
-      viewMode: 'grid'
-    };
-  }
-
-  /**
-   * 保存工作区配置
-   */
-  public async saveConfig(config: WorkspaceConfig): Promise<void> {
-    try {
-      localStorage.setItem(this.CONFIG_KEY, JSON.stringify(config));
-    } catch (error) {
-      console.error('保存工作区配置失败:', error);
-    }
-  }
-
-  /**
-   * 添加到最近文件
-   */
-  private async addToRecentFiles(id: string): Promise<void> {
-    const config = await this.getConfig();
-    config.recentFiles = [id, ...config.recentFiles.filter(fid => fid !== id)].slice(0, 10);
-    await this.saveConfig(config);
-  }
-
-  /**
-   * 切换收藏状态
-   */
-  public async toggleFavorite(id: string): Promise<boolean> {
-    try {
-      const config = await this.getConfig();
-      const isFavorite = config.favoriteFiles.includes(id);
-      
-      if (isFavorite) {
-        config.favoriteFiles = config.favoriteFiles.filter(fid => fid !== id);
-      } else {
-        config.favoriteFiles.push(id);
-      }
-      
-      await this.saveConfig(config);
-      return !isFavorite;
-    } catch (error) {
-      console.error('切换收藏状态失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 生成文件ID
-   */
-  private generateId(): string {
-    return `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
-
-  /**
-   * 计算文件大小
-   */
-  private calculateSize(elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles): number {
+  async saveToWorkspace(name: string, elements: Scene['elements'], appState: Scene['appState'], files: Scene['files'], id: string = crypto.randomUUID(), filePath?: string): Promise<string> {
+    const all = await this.getAllFiles();
+    const index = all.findIndex(file => file.id === id);
+    const previous = all[index];
+    const now = Date.now();
     const data = { elements, appState, files };
-    return new Blob([JSON.stringify(data)]).size;
-  }
-
-  /**
-   * 生成缩略图
-   */
-  private async generateThumbnail(
-    elements: readonly ExcalidrawElement[], 
-    appState: AppState, 
-    files: BinaryFiles
-  ): Promise<string> {
-    try {
-      // 使用 ThumbnailService 生成真正的 Excalidraw SVG 缩略图
-      return await thumbnailService.generateSVGThumbnail(elements, appState, files, {
-        width: 200,
-        height: 150,
-        exportPadding: 10,
-        exportBackground: true,
-        exportWithDarkMode: false
-      });
-    } catch (error) {
-      console.error('生成缩略图失败:', error);
-      // 如果生成失败，返回空白缩略图
-      return thumbnailService.getEmptyThumbnailPublic(200, 150, 'svg');
-    }
-  }
-
-
-  /**
-   * 清空工作区
-   */
-  public async clearWorkspace(): Promise<boolean> {
-    try {
-      localStorage.removeItem(this.STORAGE_KEY);
-      localStorage.removeItem(this.CONFIG_KEY);
-      return true;
-    } catch (error) {
-      console.error('清空工作区失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 获取工作区统计信息
-   */
-  public async getStats(): Promise<{
-    totalFiles: number;
-    totalSize: number;
-    recentCount: number;
-    favoriteCount: number;
-  }> {
-    const files = await this.getAllFiles();
-    const config = await this.getConfig();
-    
-    return {
-      totalFiles: files.length,
-      totalSize: files.reduce((sum, file) => sum + file.size, 0),
-      recentCount: config.recentFiles.length,
-      favoriteCount: config.favoriteFiles.length
+    const file: WorkspaceFile = {
+      id, name, createdAt: previous?.createdAt ?? now, updatedAt: now,
+      size: new Blob([JSON.stringify(data)]).size,
+      elementCount: elements.filter(element => !element.isDeleted).length,
+      data, filePath: filePath ?? previous?.filePath,
     };
+    await this.desktop().writeWorkspaceFile(file);
+    return id;
+  }
+
+  async renameFile(id: string, name: string): Promise<boolean> {
+    const files = await this.getAllFiles();
+    const file = files.find(item => item.id === id);
+    if (!file) throw new Error('绘图不存在，请刷新工作区。');
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('名称不能为空。');
+    if (trimmed === file.name) return true;
+    // Labels are separate metadata. Do not rewrite scene/image bytes on rename.
+    await this.desktop().renameWorkspaceFile(id, trimmed);
+    return true;
+  }
+
+  async getConfig(): Promise<WorkspaceConfig> {
+    const raw = this.storage.getItem(this.configKey);
+    return raw ? JSON.parse(raw) : { recentFiles: [], favoriteFiles: [], sortBy: 'updatedAt', sortOrder: 'desc', viewMode: 'list' };
+  }
+
+  async saveConfig(config: WorkspaceConfig): Promise<void> {
+    this.storage.setItem(this.configKey, JSON.stringify(config));
   }
 }
-
-// 导出单例实例
-export const workspaceService = WorkspaceService.getInstance();
+export const workspaceService = new WorkspaceService({
+  getItem: key => localStorage.getItem(key),
+  setItem: (key, value) => localStorage.setItem(key, value),
+});

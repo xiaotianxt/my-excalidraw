@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.3] - 2026-09-22
+
+### Added
+- Recoverable on-disk drafts, separate from explicit file saves.
+- Native PNG/SVG/JPEG/WebP/GIF/BMP/AVIF image opening, with editable scene recovery for embedded Excalidraw PNG/SVG files.
+- PNG/SVG exports with embedded scenes by default; persistent PNG scale and DPI preferences (default 2× / 300 DPI).
+- Custom macOS title bar with native traffic lights and synchronized native file/edit menus.
+- Content-addressed previews rendered by the official Excalidraw renderer, not approximate hand-written SVG.
+
+### Fixed
+- Failed saves and destructive actions retain the canvas and recoverable before-images.
+- External file changes block overwriting; normal close/quit flushes drafts without committing them.
+- Unchanged drawings no longer trigger periodic writes; rename only changes small label metadata.
+- New/explicitly saved workspace documents live on disk, avoiding browser storage limits for images. Legacy storage remains read-only; no bulk migration.
+- PNG DPI is written as pHYs metadata without removing embedded scene chunks.
+
+### Removed
+- Web/PWA file services, deployment configuration, icons and compatibility aliases.
+- Repurposing Cmd+Q as workspace navigation; system quit behavior is restored.
+
+### Release
+- Node 22 CI, persistence tests and real Electron image round-trip checks.
+- All desktop installers and SHA-256 checksums must finish before a release becomes public.
+- Hosted builds are not developer-signed/notarized; this limitation is disclosed in the release notes.
+
 ## [0.1.2] - 2025-09-13
 
 ### Fixed | 修复

@@ -1,283 +1,87 @@
-# My Excalidraw | 我的 Excalidraw
+# My Excalidraw
 
-[English](#english) | [中文](#中文)
+一个以本地文件为核心的 Excalidraw 桌面工作区。仅提供桌面版，不包含 Web/PWA 部署或云同步。
 
----
+## 草稿与保存分开
 
-## English
+- **自动保留草稿**：新图和已有绘图的修改都可以恢复，不自动覆盖正式文件。
+- **主动保存**：`⌘/Ctrl S` 才写入 `.excalidraw` 文件。第一次保存会询问位置。
+- **安全导航**：返回工作区、打开另一张图、关闭或退出前，先确保草稿已写入磁盘；失败则留在原处。
+- **清空和放弃有保护**：先写恢复副本，再执行操作。清空后可撤销或恢复。
+- **明确的失败状态**：区分文件保存失败与文件已保存但工作区更新失败，支持重试和另存副本。
+- **不做无关写入**：没有内容修改就不自动保存；重命名不生成缩略图。
 
-A modern, feature-rich Excalidraw desktop application built with Electron, React, and TypeScript. This application provides a comprehensive workspace management system for your drawings with advanced features like file organization, theme switching, and seamless integration with the Excalidraw drawing engine.
+工作区支持真实缩略图和列表两种视图，以及搜索、排序和重命名。预览由官方 Excalidraw 渲染器生成，保留原图字体、换行、箭头和图片；按内容缓存，不在绘图或改名时重复生成。
 
-### ✨ Features
+macOS 使用自定义标题栏，红黄绿按钮保留系统原生行为。菜单栏同步提供新建、打开、保存、另存、重命名、放弃草稿、返回工作区和受保护的清空操作；不可执行的动作会禁用。画布使用官方 Excalidraw 编辑器，绘图格式保持兼容。
 
-#### 🎨 **Drawing Experience**
-- Full Excalidraw integration with all native features
-- Clean, distraction-free interface
-- Auto-save functionality (every 30 seconds)
-- Smart save-and-return workflow
+## 打开图片与可编辑导出
 
-#### 📁 **Workspace Management**
-- Visual file browser with grid and list views
-- Thumbnail previews for all drawings
-- Advanced file operations (rename, duplicate, delete, favorite)
-- Batch operations for multiple files
-- Smart file organization with metadata
+「打开文件」支持 PNG、SVG、JPEG/JFIF、WebP、GIF、BMP、AVIF 和 ICO。PNG/SVG 若内嵌 Excalidraw 场景，会恢复可编辑图形；普通图片则作为图片元素导入。损坏的内嵌场景会报错，不会悄悄变成不可编辑图片。
 
-#### 🎯 **User Experience**
-- **Inline Editing**: Click any filename to rename instantly
-- **Keyboard Shortcuts**: 
-  - `Ctrl/Cmd + N`: New drawing
-  - `Ctrl/Cmd + O`: Import file
-  - `Ctrl/Cmd + Q`: Save and return to workspace
-  - `Delete`: Delete selected files
-  - `F2`: Rename selected file
-- **Theme Support**: Light/Dark/System themes with smooth transitions
-- **Responsive Design**: Adapts to different screen sizes
+「导出图像」默认嵌入场景，生成的 PNG/SVG 可以再次打开编辑。PNG 默认 **2×、300 DPI**，可调整并点击「保存为默认」；也可以从菜单「文件 → 默认导出设置」修改。
 
-#### 🔧 **Technical Features**
-- Built with modern web technologies
-- TypeScript for type safety
-- Modular component architecture
-- Efficient file storage and retrieval
-- Cross-platform compatibility (Windows, macOS, Linux)
+- 倍率增加像素数量；DPI 仅标记打印尺寸，不凭空增加细节。
+- SVG 是矢量图，不使用 PNG 的倍率/DPI。嵌入照片仍受其原始分辨率限制。
+- 打开图片得到独立草稿，不自动覆盖来源图片。保存绘图使用 `.excalidraw`，生成图片使用「导出图像」。
+- 导出不会提交当前草稿。嵌入场景会增加文件体积并包含可编辑内容，可取消勾选。
+- 图片输入上限 64 MB；PNG 输出上限 3200 万像素 / 边长 16384。动图不保留动画。
 
-### 🚀 Getting Started
+## 本地开发
 
-#### Prerequisites
-- Node.js (v16 or higher)
-- npm or yarn
+建议使用 **Node.js 22 LTS**。
 
-#### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd my-excalidraw
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Start development server**
-   ```bash
-   npm run dev
-   ```
-
-4. **Build for production**
-   ```bash
-   npm run build
-   ```
-
-### 🏗️ Architecture
-
-#### Tech Stack
-- **Frontend**: React 18 + TypeScript
-- **Desktop**: Electron
-- **Styling**: Tailwind CSS with custom CSS variables
-- **Drawing Engine**: @excalidraw/excalidraw
-- **Build Tool**: Vite
-
-#### Project Structure
-```
-src/
-├── components/           # React components
-│   ├── workspace/       # Workspace-related components
-│   │   ├── FileCard.tsx      # Individual file display
-│   │   ├── FileGrid.tsx      # File grid/list layout
-│   │   ├── EditableText.tsx  # Inline text editing
-│   │   └── ...
-│   ├── ThemeToggle.tsx  # Theme switching
-│   └── WorkspacePage.tsx # Main workspace
-├── contexts/            # React contexts
-│   └── ThemeContext.tsx # Theme management
-├── services/            # Business logic
-│   ├── WorkspaceService.ts   # File management
-│   ├── FileService.ts        # File I/O operations
-│   ├── ExportService.ts      # Export functionality
-│   └── ThumbnailService.ts   # Thumbnail generation
-└── types/               # TypeScript definitions
+```bash
+npm ci
+npm run dev
 ```
 
-### 🎨 Customization
+开发和未打包运行使用独立的 **My Excalidraw Development** 配置目录，不访问已安装应用的数据。也可显式指定隔离目录：
 
-#### Themes
-The application supports custom themes through CSS variables. You can modify the theme colors in `src/index.css`:
-
-```css
-:root {
-  --color-excalidraw-purple: #5f57ff;
-  --color-bg-primary: #ffffff;
-  --color-text-primary: #1e1e1e;
-  /* ... more variables */
-}
+```bash
+MY_EXCALIDRAW_DATA_DIR=/absolute/path/to/test-profile npm run dev
 ```
 
-#### Components
-All components are modular and can be easily customized or extended. The `EditableText` component, for example, can be reused throughout the application for any inline editing needs.
+这会启动 Electron，不是要求你在浏览器中使用网页版本。
 
-### 🤝 Contributing
+## 检查与构建
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 中文
-
-一个现代化、功能丰富的 Excalidraw 桌面应用程序，基于 Electron、React 和 TypeScript 构建。该应用程序为您的绘图提供了全面的工作区管理系统，具有文件组织、主题切换和与 Excalidraw 绘图引擎无缝集成等高级功能。
-
-### ✨ 功能特性
-
-#### 🎨 **绘图体验**
-- 完整的 Excalidraw 集成，支持所有原生功能
-- 简洁、无干扰的界面设计
-- 自动保存功能（每30秒）
-- 智能的保存并返回工作流程
-
-#### 📁 **工作区管理**
-- 可视化文件浏览器，支持网格和列表视图
-- 所有绘图的缩略图预览
-- 高级文件操作（重命名、复制、删除、收藏）
-- 多文件批量操作
-- 带有元数据的智能文件组织
-
-#### 🎯 **用户体验**
-- **内联编辑**：点击任何文件名即可立即重命名
-- **键盘快捷键**：
-  - `Ctrl/Cmd + N`：新建绘图
-  - `Ctrl/Cmd + O`：导入文件
-  - `Ctrl/Cmd + Q`：保存并返回工作区
-  - `Delete`：删除选中文件
-  - `F2`：重命名选中文件
-- **主题支持**：浅色/深色/系统主题，支持平滑过渡
-- **响应式设计**：适应不同屏幕尺寸
-
-#### 🔧 **技术特性**
-- 使用现代 Web 技术构建
-- TypeScript 提供类型安全
-- 模块化组件架构
-- 高效的文件存储和检索
-- 跨平台兼容性（Windows、macOS、Linux）
-
-### 🚀 快速开始
-
-#### 环境要求
-- Node.js（v16 或更高版本）
-- npm 或 yarn
-
-#### 安装步骤
-
-1. **克隆仓库**
-   ```bash
-   git clone <repository-url>
-   cd my-excalidraw
-   ```
-
-2. **安装依赖**
-   ```bash
-   npm install
-   ```
-
-3. **启动开发服务器**
-   ```bash
-   npm run dev
-   ```
-
-4. **构建生产版本**
-   ```bash
-   npm run build
-   ```
-
-### 🏗️ 架构设计
-
-#### 技术栈
-- **前端**：React 18 + TypeScript
-- **桌面端**：Electron
-- **样式**：Tailwind CSS 配合自定义 CSS 变量
-- **绘图引擎**：@excalidraw/excalidraw
-- **构建工具**：Vite
-
-#### 项目结构
-```
-src/
-├── components/           # React 组件
-│   ├── workspace/       # 工作区相关组件
-│   │   ├── FileCard.tsx      # 单个文件显示
-│   │   ├── FileGrid.tsx      # 文件网格/列表布局
-│   │   ├── EditableText.tsx  # 内联文本编辑
-│   │   └── ...
-│   ├── ThemeToggle.tsx  # 主题切换
-│   └── WorkspacePage.tsx # 主工作区
-├── contexts/            # React 上下文
-│   └── ThemeContext.tsx # 主题管理
-├── services/            # 业务逻辑
-│   ├── WorkspaceService.ts   # 文件管理
-│   ├── FileService.ts        # 文件 I/O 操作
-│   ├── ExportService.ts      # 导出功能
-│   └── ThumbnailService.ts   # 缩略图生成
-└── types/               # TypeScript 类型定义
+```bash
+npm run type-check
+npm run lint
+npm test
+npm run build       # 编译 renderer / main / preload
+npm run build:dir   # 打包到 release/，不安装、不发布
+npm run test:images # 编译后运行真实 Electron PNG/SVG/DPI 往返测试
 ```
 
-### 🎨 自定义配置
+**不要直接用打包产物替换现有应用。** 应先备份真实数据，并使用其副本验证兼容性。当前改造没有迁移、清空或改写旧工作区。
 
-#### 主题
-应用程序通过 CSS 变量支持自定义主题。您可以在 `src/index.css` 中修改主题颜色：
+## 快捷键
 
-```css
-:root {
-  --color-excalidraw-purple: #5f57ff;
-  --color-bg-primary: #ffffff;
-  --color-text-primary: #1e1e1e;
-  /* ... 更多变量 */
-}
-```
+| 操作 | 快捷键 |
+| --- | --- |
+| 保存 | `⌘/Ctrl S` |
+| 另存副本并继续编辑该文件 | `⌘/Ctrl Shift S` |
+| 导出图像 | `⌘/Ctrl Shift E` |
+| 新建 / 打开 | `⌘/Ctrl N` / `⌘/Ctrl O` |
+| 返回工作区，不提交修改 | `⌘/Ctrl Shift H` |
+| 关闭窗口 / macOS 退出 | 系统原有的 `⌘W` / `⌘Q` |
 
-#### 组件
-所有组件都是模块化的，可以轻松自定义或扩展。例如，`EditableText` 组件可以在应用程序中重复使用，满足任何内联编辑需求。
+`Escape` 留给画布和对话框，不承担返回工作区的行为。
 
-### 🤝 贡献指南
+## 恢复与边界
 
-1. Fork 本仓库
-2. 创建您的功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交您的更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 打开一个 Pull Request
+- 自动草稿在应用数据目录的 `document-state/drafts/`，不是操作系统会随时清理的临时目录。
+- 清空和放弃前的恢复文件可从 **文件 → 查看恢复副本** 找到，使用“打开文件”重新打开。
+- 旧工作区只读兼容，不批量迁移或删除。新建/主动保存的文档逐文件存入 `document-state/documents/`，不再受浏览器容量限制；名称保存在独立小型元数据中。
+- 自动草稿不等于外部备份；强制结束进程或断电仍可能丢失尚未完成写入的最后修改。
+- 恢复副本暂不自动清理，可能逐渐占用空间。
 
-### 📝 许可证
+详细设计、数据边界、验证记录和已知限制见 [桌面工作区设计](docs/desktop-workspace.md)。
 
-本项目采用 MIT 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
+## 技术
 
----
+Electron · React · TypeScript · Vite · 官方 `@excalidraw/excalidraw`。无网页部署流程。版本标签触发桌面发布工作流，所有平台构建成功后才发布完整安装包和校验和。详见 [RELEASE.md](RELEASE.md)。
 
-## 📸 Screenshots | 截图
-
-### Workspace View | 工作区视图
-![Workspace](docs/screenshots/workspace.png)
-
-### Drawing Interface | 绘图界面
-![Drawing](docs/screenshots/drawing.png)
-
-### Theme Options | 主题选项
-![Themes](docs/screenshots/themes.png)
-
----
-
-## 🔗 Links | 相关链接
-
-- [Excalidraw Official](https://excalidraw.com/)
-- [Electron Documentation](https://www.electronjs.org/docs)
-- [React Documentation](https://reactjs.org/docs)
-- [TypeScript Documentation](https://www.typescriptlang.org/docs)
-
----
-
-**Made with ❤️ by [Your Name]**
+MIT License. See [LICENSE](LICENSE).

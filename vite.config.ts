@@ -1,31 +1,35 @@
-import { defineConfig } from 'vite'
-import path from 'node:path'
-import electron from 'vite-plugin-electron/simple'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+import { defineConfig } from 'vite';
+import path from 'node:path';
+import { cpSync } from 'node:fs';
+import electron from 'vite-plugin-electron/simple';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
-// https://vitejs.dev/config/
+// Bundle the editor's fonts locally; drawing must work without a CDN.
+cpSync('node_modules/@excalidraw/excalidraw/dist/prod/fonts', 'public/excalidraw-assets/fonts', { recursive: true });
+
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    electron({
-      main: {
-        // Shortcut of `build.lib.entry`.
-        entry: 'electron/main.ts',
+  base: './',
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: id => /\/node_modules\/(react|react-dom|scheduler)\//.test(id) ? 'react-vendor' : undefined,
       },
-      preload: {
-        // Shortcut of `build.rollupOptions.input`.
-        // Preload scripts may contain Web assets, so use the `build.rollupOptions.input` instead `build.lib.entry`.
-        input: path.join(__dirname, 'electron/preload.ts'),
+    },
+  },
+  plugins: [{
+    name: 'desktop-content-security-policy',
+    apply: 'build',
+    transformIndexHtml: () => [{
+      tag: 'meta',
+      attrs: {
+        'http-equiv': 'Content-Security-Policy',
+        content: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'",
       },
-      // Ployfill the Electron and Node.js API for Renderer process.
-      // If you want use Node.js in Renderer process, the `nodeIntegration` needs to be enabled in the Main process.
-      // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer
-      renderer: process.env.NODE_ENV === 'test'
-        // https://github.com/electron-vite/vite-plugin-electron-renderer/issues/78#issuecomment-2053600808
-        ? undefined
-        : {},
-    }),
-  ],
-})
+      injectTo: 'head-prepend',
+    }],
+  }, react(), tailwindcss(), electron({
+    main: { entry: 'electron/main.ts' },
+    preload: { input: path.join(import.meta.dirname, 'electron/preload.ts') },
+  })],
+});
